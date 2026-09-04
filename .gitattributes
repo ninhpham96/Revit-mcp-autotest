@@ -1,0 +1,3 @@
+# Giữ LF cho shell script bất kể autocrlf trên máy nào — CRLF sẽ làm vỡ
+# shebang khi chạy bằng bash trên Git Bash/WSL/Linux/Mac.
+*.sh text eol=lf
