@@ -62,15 +62,18 @@ dừng ở "build sạch") → nếu có thao tác UI thì test qua `UiAutomatio
 
 ## Cập nhật khi skill có bản mới
 
+Chạy script cập nhật (tự `git pull`, tự build lại `UiAutomationToolkit` nếu
+source của nó thay đổi, dừng lại nếu có thay đổi local chưa commit để tránh
+mất dữ liệu):
+
 ```bash
-cd ~/.claude/skills/revit-addin-mcp-workflow
-git pull
+~/.claude/skills/revit-addin-mcp-workflow/update-skill.sh
 ```
 
-Nếu `assets/UiAutomationToolkit` có thay đổi, build lại:
+Windows PowerShell:
 
-```bash
-cd assets/UiAutomationToolkit && dotnet build
+```powershell
+& "$env:USERPROFILE\.claude\skills\revit-addin-mcp-workflow\update-skill.ps1"
 ```
 
 ## Cấu trúc repo
