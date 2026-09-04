@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/UiAutomationToolkit.Cli/UiAutomationToolkit.Cli.csproj" />
+    <Project Path="src/UiAutomationToolkit.Core/UiAutomationToolkit.Core.csproj" />
+  </Folder>
+</Solution>
