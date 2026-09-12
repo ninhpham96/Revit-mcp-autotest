@@ -56,6 +56,21 @@ foreach (var p in panels)
         if (p.Name == "TênPanel" && item.Name == "TênNút") target = item;
 ```
 
+**`GetRibbonPanels()` không tham số CHỈ thấy tab "Add-Ins"** — hành vi tài liệu
+chính thức của Revit API, không phải giới hạn của kỹ thuật này. Add-in nằm ở tab
+khác (kể cả tab do add-in/dev loader tự tạo) sẽ không xuất hiện trong `panels`
+ở trên dù nó đã nạp thật. Hai cách đúng:
+
+- **Cách A** (đã biết tên tab): `app.GetRibbonPanels("TênTab")`.
+- **Cách B** (chưa biết tên tab): liệt kê toàn bộ
+  `Autodesk.Windows.ComponentManager.Ribbon.Tabs` → panel → item — xem snippet
+  dump đầy đủ ở cuối mục này.
+
+Nếu add-in được nạp qua một dev loader dùng slot ribbon chung (nút tên
+generic/đánh số, không phải tên add-in) thì còn một bước nữa TRƯỚC khi tới đây:
+xác định đúng slot nào đang giữ add-in của bạn — xem
+[10-dynamic-loader-resolution.md](10-dynamic-loader-resolution.md).
+
 ### Bước 2 — Lấy ID nội bộ qua reflection
 
 `Autodesk.Revit.UI.RibbonItem` (base class của `PushButton`) giữ 1 field
@@ -120,6 +135,11 @@ return string.Join("\n", items);
 
 ## Giới hạn / lưu ý
 
+- **Nút do dev loader tạo bằng slot chung có thể trả `Text`/`Name` RỖNG**
+  qua `m_RibbonItem` — đây là điểm mù riêng của loại nút này, đừng kết luận
+  "nút không dùng được". Tên đáng tin cậy là `item.Name` từ
+  `RibbonPanel.GetItems()` (API công khai). Cần biết slot nào đang giữ add-in
+  nào thì xem [10-dynamic-loader-resolution.md](10-dynamic-loader-resolution.md).
 - Dựa vào field private `m_RibbonItem` và type nội bộ
   `Autodesk.Windows.RibbonButton` — **API không công bố chính thức**. Autodesk
   có thể đổi cấu trúc field này ở version khác mà không báo trước — đã verify

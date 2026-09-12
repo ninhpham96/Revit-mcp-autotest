@@ -8,6 +8,9 @@
 #>
 param(
     [string]$Year = '2026',
+    # Neu add-in nap qua dev loader dung slot chung (nut ten GenericCommand00..NN
+    # thay vi ten add-in) va chua biet chac nut nao la cua add-in minh, doc
+    # references/10-dynamic-loader-resolution.md truoc khi set -RibbonTab.
     [string]$RibbonTab = 'MiniApps',
     [string]$LogGlob = "$env:LOCALAPPDATA\MiniAppLoader\logs\*.log",
     [string]$DiscoveryPath

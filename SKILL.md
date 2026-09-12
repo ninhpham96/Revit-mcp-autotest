@@ -76,6 +76,7 @@ Import-Module "$env:USERPROFILE\.claude\skills\revit-cad-addin-autotest\scripts\
 | Tình huống | Đọc |
 |---|---|
 | Cần bấm một nút ribbon Revit từ MCP (không phải người dùng bấm) | [01-trigger-ribbon-button.md](references/01-trigger-ribbon-button.md) |
+| Nút ribbon của add-in không thấy đâu cả (dev loader tạo tab riêng), hoặc tên nút chỉ là số/generic (`GenericCommand00`..) không biết ứng với add-in nào | [10-dynamic-loader-resolution.md](references/10-dynamic-loader-resolution.md) |
 | Không biết command đã chạy tới đâu, lỗi ở bước nào | [02-debug-log-pattern.md](references/02-debug-log-pattern.md) |
 | Cửa sổ WPF modeless cần gọi `Document.Delete`/bất kỳ API Revit nào | [03-external-event-pattern.md](references/03-external-event-pattern.md) |
 | Không biết nên dùng `uitest.exe`, `HostUiTest.psm1` hay MCP/COM | [04-ui-automation-testing.md](references/04-ui-automation-testing.md) |
@@ -135,3 +136,6 @@ app WPF/WinForms nào, không riêng Revit/AutoCAD.
   Revit 2024.3 và 2026, không có cam kết ổn định giữa các version.
 - Chưa thử trên nhiều màn hình DPI khác nhau; `Invoke-UiClick` dùng toạ độ màn
   hình vật lý.
+- Kỹ thuật đọc slot của dev loader ([10](references/10-dynamic-loader-resolution.md))
+  phụ thuộc shape nội bộ của TỪNG loader cụ thể — verify trên MiniAppLoader,
+  chưa thử loader khác.
