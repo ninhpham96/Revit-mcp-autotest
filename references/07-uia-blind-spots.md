@@ -126,3 +126,48 @@ vòng poll 400ms mà mỗi vòng tốn 3 giây thì không còn là poll nữa.
 
 `Find-UiElement` tự chọn đường nhanh khi có `-AutomationId`, hoặc có đủ `-Name`
 và `-Type` mà không dùng `-Match`.
+
+## 9. Kéo-thả: dùng Explorer làm nguồn OLE
+
+UIA không kéo-thả được, và gọi thẳng API của app đích cũng không: WPF chỉ nhận
+drop khi có một OLE drag source thật đang chạy `DoDragDrop`.
+
+**Windows Explorer chính là một OLE drag source thật.** Mở Explorer ở thư mục
+chứa file rồi kéo bằng chuột thật sang cửa sổ đích — app đích không phân biệt
+được với người dùng thật. `Invoke-UiDragDrop` làm đúng việc đó.
+
+```powershell
+Start-Process explorer.exe $thuMucTam
+# doc toa do item qua UIA cua cua so Explorer, roi:
+Invoke-UiDragDrop -FromX $fx -FromY $fy -ToX $paneX -ToY $paneY
+```
+
+### Phải dùng `SendInput`, không phải `mouse_event`
+
+Đây là chi tiết quyết định, và mất vài vòng mới tìm ra. Bản đầu dùng
+`mouse_event` + `SetCursorPos`:
+
+- **Bấm chạy tốt** — verify được là chọn đúng file trong Explorer
+  (`SelectionItemPattern.IsSelected` = True).
+- **Kéo thì không bao giờ khởi động.** Explorer coi cả thao tác là một cú click,
+  cửa sổ đích không nhận drop nào, và không có lỗi nào được ném ra.
+
+Đổi sang `SendInput` là ăn ngay, không đổi gì khác. `mouse_event` đã bị Microsoft
+đánh dấu superseded; module này dùng `SendInput` cho **mọi** thao tác chuột.
+
+Ba chi tiết còn lại, thiếu cái nào drag cũng không khởi động: nhích vài pixel ngay
+sau khi nhấn để vượt ngưỡng kéo (mặc định 4px); di chuyển theo **nhiều bước nhỏ**
+vì OLE drag chạy trong message loop riêng của nguồn; và nhúc nhích tại đích rồi
+mới nhả, để đích kịp xử lý `DragEnter`/`DragOver`.
+
+### An toàn
+
+Thả trượt vào một thư mục khác sẽ **di chuyển** file (cùng ổ đĩa). Luôn kéo từ một
+**bản sao trong thư mục tạm**, đừng kéo file gốc trong repo.
+
+### Và đọc log trước khi đổ lỗi cho drag
+
+Lần thả thứ hai không làm config đổi, tôi kết luận drag hỏng và đi sửa nhầm chỗ.
+Đọc log của add-in mới thấy: cú thả **đã tới nơi**, và app **cố ý từ chối** file
+đó vì nó không có entry point hợp lệ. Cùng một bài học với phần đầu file này —
+trạng thái app là nguồn đúng, còn "UI không đổi" thì không nói lên nguyên nhân.

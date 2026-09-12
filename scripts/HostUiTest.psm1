@@ -71,15 +71,54 @@ public static class HostNative
     public static void ClickNative(IntPtr btn) { SendMessageW(btn, 0x00F5, IntPtr.Zero, IntPtr.Zero); } // BM_CLICK
     public static void CloseWindow(IntPtr h)   { PostMessageW(h, 0x0010, IntPtr.Zero, IntPtr.Zero); }   // WM_CLOSE
 
+    // ---- Nhap lieu tong hop: SendInput, KHONG phai mouse_event ----------------
+    //
+    // Loi that: bam bang mouse_event + SetCursorPos thi chay tot, nhung KEO-THA thi
+    // khong bao gio khoi dong duoc - Explorer coi ca thao tac la mot cu click va cua so
+    // dich khong nhan duoc drop nao. Doi sang SendInput la an ngay, khong doi gi khac.
+    // mouse_event da bi Microsoft danh dau superseded; dung SendInput cho MOI thu.
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MOUSEINPUT { public int dx; public int dy; public uint mouseData; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
+    [StructLayout(LayoutKind.Sequential)]
+    public struct INPUT { public uint type; public MOUSEINPUT mi; }
+
+    [DllImport("user32.dll", SetLastError = true)] static extern uint SendInput(uint n, INPUT[] p, int cb);
+    [DllImport("user32.dll")] static extern int GetSystemMetrics(int i);
+
+    const uint MOVE = 0x0001, LEFTDOWN = 0x0002, LEFTUP = 0x0004, ABSOLUTE = 0x8000, VIRTUALDESK = 0x4000;
+
+    static void Send(uint flags, int x, int y)
+    {
+        // Toa do tuyet doi la 0..65535 tren TOAN BO virtual desktop (VIRTUALDESK), nen
+        // dung duoc voi nhieu man hinh va voi man hinh phu o toa do am.
+        int vx = GetSystemMetrics(76), vy = GetSystemMetrics(77);
+        int vw = GetSystemMetrics(78), vh = GetSystemMetrics(79);
+
+        var i = new INPUT { type = 0 };
+        i.mi.dwFlags = flags;
+        if ((flags & MOVE) != 0)
+        {
+            i.mi.dx = (int)(((double)(x - vx) * 65535.0) / (vw - 1));
+            i.mi.dy = (int)(((double)(y - vy) * 65535.0) / (vh - 1));
+        }
+        if (SendInput(1, new[] { i }, Marshal.SizeOf(typeof(INPUT))) != 1)
+            throw new Exception("SendInput thất bại, GetLastError=" + Marshal.GetLastWin32Error());
+    }
+
+    public static void MoveTo(int x, int y) { Send(MOVE | ABSOLUTE | VIRTUALDESK, x, y); }
+    public static void MouseDown()          { Send(LEFTDOWN, 0, 0); }
+    public static void MouseUp()            { Send(LEFTUP, 0, 0); }
+
     public static void ClickScreen(int x, int y, bool restore)
     {
         POINT old; GetCursorPos(out old);
-        SetCursorPos(x, y);
+        MoveTo(x, y);
         System.Threading.Thread.Sleep(250);
-        mouse_event(0x0002, 0, 0, 0, IntPtr.Zero);   // LEFTDOWN
+        MouseDown();
         System.Threading.Thread.Sleep(60);
-        mouse_event(0x0004, 0, 0, 0, IntPtr.Zero);   // LEFTUP
-        if (restore) { System.Threading.Thread.Sleep(120); SetCursorPos(old.X, old.Y); }
+        MouseUp();
+        if (restore) { System.Threading.Thread.Sleep(120); MoveTo(old.X, old.Y); }
     }
 }
 "@
@@ -349,6 +388,65 @@ function Invoke-UiClickOffset {
     if ($r.Width -le 0) { return $false }
     Invoke-UiClick -X ([int]($r.X + $Dx)) -Y ([int]($r.Y + $Dy)) -NoRestoreCursor:$NoRestoreCursor
     $true
+}
+
+function Invoke-UiDragDrop {
+    <#  .SYNOPSIS Kéo-thả THẬT giữa hai điểm trên màn hình, đi qua OLE của Windows.
+        .DESCRIPTION Không mô phỏng được drag-drop bằng cách gọi API của app đích: WPF chỉ
+        nhận drop khi có một OLE drag source thật đang chạy `DoDragDrop`.
+
+        Mẹo: **Windows Explorer chính là một OLE drag source thật.** Mở Explorer ở thư mục
+        chứa file, kéo bằng chuột thật từ item đó sang cửa sổ đích — đúng thao tác người
+        dùng làm, và app đích không phân biệt được.
+
+        Bốn chi tiết bắt buộc, thiếu cái nào cũng làm drag không khởi động — cả bốn đều
+        rút ra từ một lần thất bại thật:
+          - **Phải dùng `SendInput`.** Bản đầu dùng `mouse_event` + `SetCursorPos`: bấm thì
+            chạy tốt (đã verify chọn được file trong Explorer), nhưng kéo thì Explorer coi
+            cả thao tác là một cú click và không drop gì cả. Đổi sang `SendInput` là ăn
+            ngay, không đổi gì khác.
+          - Nhích vài pixel ngay sau khi nhấn, để vượt ngưỡng kéo của Windows
+            (SM_CXDRAG/SM_CYDRAG, mặc định 4px).
+          - Di chuyển theo NHIỀU bước nhỏ. OLE drag chạy trong message loop riêng của nguồn;
+            một bước nhảy duy nhất không sinh đủ sự kiện DragOver.
+          - Nhúc nhích tại đích rồi mới nhả, để đích kịp xử lý DragEnter/DragOver.
+
+        AN TOÀN: thả trượt vào một thư mục khác sẽ DI CHUYỂN file (cùng ổ đĩa). Luôn kéo từ
+        một BẢN SAO trong thư mục tạm, đừng kéo file gốc. #>
+    param(
+        [Parameter(Mandatory)][int]$FromX,
+        [Parameter(Mandatory)][int]$FromY,
+        [Parameter(Mandatory)][int]$ToX,
+        [Parameter(Mandatory)][int]$ToY,
+        [int]$Steps = 40,
+        [int]$StepMs = 20,
+        [int]$HoverMs = 500
+    )
+    [HostNative]::MoveTo($FromX, $FromY)
+    Start-Sleep -Milliseconds 400
+    [HostNative]::MouseDown()
+    Start-Sleep -Milliseconds 200
+
+    # Vượt ngưỡng kéo trước đã, chưa đi đâu cả.
+    foreach ($d in 2, 4, 6, 9, 13, 18) {
+        [HostNative]::MoveTo($FromX + $d, $FromY + $d)
+        Start-Sleep -Milliseconds 70
+    }
+
+    for ($i = 1; $i -le $Steps; $i++) {
+        [HostNative]::MoveTo([int]($FromX + ($ToX - $FromX) * $i / $Steps),
+                             [int]($FromY + ($ToY - $FromY) * $i / $Steps))
+        Start-Sleep -Milliseconds $StepMs
+    }
+
+    # Nhúc nhích trên đích để sinh thêm DragOver rồi mới nhả.
+    foreach ($d in 0, 3, -3, 0) {
+        [HostNative]::MoveTo($ToX + $d, $ToY + $d)
+        Start-Sleep -Milliseconds 150
+    }
+    Start-Sleep -Milliseconds $HoverMs
+    [HostNative]::MouseUp()
+    Start-Sleep -Milliseconds 500
 }
 
 # ===========================================================================

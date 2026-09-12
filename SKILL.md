@@ -123,8 +123,9 @@ app WPF/WinForms nào, không riêng Revit/AutoCAD.
 
 ## Giới hạn đã biết
 
-- **Kéo-thả file vào cửa sổ** chưa tự động hoá được: cần OLE drag source thật,
-  `mouse_event` giữ-rê không kích hoạt được drop của WPF.
+- **Kéo-thả file** đã làm được — dùng Explorer làm nguồn OLE và `SendInput`
+  ([07](references/07-uia-blind-spots.md)). `mouse_event` thì **không**: bấm chạy
+  nhưng kéo không bao giờ khởi động.
 - **`NETLOAD` nạp add-in AutoCAD chưa verify** trong phiên nào — mới chạy lệnh
   dựng sẵn. AutoCAD không unload assembly được, nên vòng sửa-code phải khởi động
   lại app (~20–30 giây).
