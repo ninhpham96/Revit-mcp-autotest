@@ -41,13 +41,20 @@ DI/Serilog của project **không được gọi** → dùng `Host.GetService<IL
 trong tình huống này có thể `NullReferenceException` ngay tại chỗ đang cố
 debug.
 
-## Giải pháp: logger tối giản, ghi thẳng ra file
+## Cách chẩn đoán: log tạm thời, ghi thẳng ra file
+
+> Đoạn dưới đây là code **tạm thời để chẩn đoán lúc test**, không phải kiến
+> trúc logging bạn nên giữ mãi trong plugin. Nếu project đã có logger riêng
+> (Serilog, NLog...) và nó hoạt động được trong ngữ cảnh này thì dùng nó, đừng
+> thêm cái này. Chỉ cần khi project CHƯA có gì ghi lại được (ví dụ do dev
+> loader làm pipeline DI/Serilog chuẩn không chạy — xem mục dưới) và bạn cần
+> một cách nhanh để biết command chạy tới đâu.
 
 Không phụ thuộc `Host`/DI/Serilog, ghi thẳng `System.IO.File`, tự nuốt lỗi
 (logger không được phép làm crash command nó đang chẩn đoán):
 
 ```csharp
-// Utils/DebugLog.cs
+// Vd: Utils/DebugLog.cs — xoá đi sau khi debug xong nếu chỉ dùng tạm
 using System;
 using System.IO;
 
@@ -75,9 +82,10 @@ namespace YourAddin.Utils
 }
 ```
 
-Bọc thân `Execute()` trong `try/catch`, log các mốc quan trọng (bắt đầu, kết
-quả trung gian, thành công), log cả exception nếu có rồi `throw` lại (để
-Revit vẫn báo lỗi bình thường cho người dùng thật):
+Muốn dùng: bọc thân `Execute()` trong `try/catch` **tạm thời lúc debug**, log
+các mốc quan trọng (bắt đầu, kết quả trung gian, thành công), log cả exception
+nếu có rồi `throw` lại (để Revit vẫn báo lỗi bình thường cho người dùng thật).
+Đây là code để CHẨN ĐOÁN một lần, không phải style bắt buộc cho mọi command:
 
 ```csharp
 public override void Execute()

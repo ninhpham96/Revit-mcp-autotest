@@ -94,13 +94,14 @@ SKILL.md                              — nội dung chính, Claude đọc khi s
 references/
   01-trigger-ribbon-button.md         — bấm nút ribbon Revit từ MCP (PostCommand)
   02-debug-log-pattern.md             — xác nhận command chạy tới đâu (DebugLog)
-  03-external-event-pattern.md        — gọi API Revit từ cửa sổ WPF modeless
+  03-external-event-pattern.md        — test cửa sổ WPF: .Show() khác .ShowDialog() thế nào
   04-ui-automation-testing.md         — CHỌN công cụ nào; vì sao chạy ngoài process
   05-safe-testing.md                  — khẳng định đúng chỗ + không phá dữ liệu thật
   06-host-lifecycle.md                — mở host, biết khi nào nó THẬT SỰ sẵn sàng
   07-uia-blind-spots.md               — UIA không thấy gì, vì sao, và leo thang ra sao
   08-autocad-com.md                   — AutoCAD: COM là kênh chạy lệnh + đọc state
   09-powershell-traps.md              — bẫy PowerShell trong harness test
+  10-dynamic-loader-resolution.md      — tìm đúng nút khi add-in nạp qua dev loader slot chung
 scripts/
   HostUiTest.psm1                     — module lái host (không cần build)
 examples/
