@@ -1,105 +1,136 @@
 ---
-name: revit-addin-mcp-workflow
+name: revit-cad-addin-autotest
 description: >
-  Quy trình phát triển + BẮT BUỘC test qua Revit thật (build sạch KHÔNG phải là
-  xong) cho Revit add-in (Nice3point.Revit.Templates) có cửa sổ WPF modeless,
-  điều khiển qua MCP client rvt-mcp — đúc kết từ thực chiến, mọi lỗi trong này
-  đều đã verify thật. Dùng khi: sửa/thêm tính năng cho Revit add-in (thêm nút,
-  đổi cột thành ComboBox, đổi logic xử lý...) — luôn tự chạy qua Revit thật
-  trước khi báo hoàn thành, không dừng ở build; cần bấm 1 nút ribbon Revit từ
-  code/MCP; debug command không rõ chạy tới đâu; cửa sổ WPF treo/crash khi mở
-  MessageBox; gọi API Revit từ cửa sổ modeless (Show(), không ShowDialog());
-  hoặc tự động hoá test UI (bấm nút, chọn dòng, xác nhận dialog) không cần
-  chuột thật. Áp dụng mọi Revit add-in dùng Nice3point.Revit.Templates.
+  Quy trình phát triển + BẮT BUỘC test qua host thật (build sạch KHÔNG phải là
+  xong) cho add-in Revit và AutoCAD: tự mở app, vượt dialog khởi động, chạy lệnh,
+  bấm nút, rồi khẳng định bằng trạng thái thật của app chứ không bằng chính UI
+  vừa bấm. Mọi kỹ thuật đều đã verify bằng cách chạy thật. Dùng khi: sửa/thêm
+  tính năng cho add-in Revit hoặc AutoCAD và cần tự test trước khi báo xong; cần
+  bấm một nút ribbon Revit từ code/MCP; cần chạy lệnh AutoCAD và đọc lại model để
+  kiểm chứng; debug command không rõ chạy tới đâu; cửa sổ WPF modeless treo/crash
+  khi gọi API Revit; UI Automation "không tìm thấy" control dù nó đang hiện rõ;
+  cần bấm control không có peer UIA; dialog khởi động của host chặn test tự động;
+  test UI cho kết quả chập chờn lúc pass lúc fail; hoặc script PowerShell của
+  harness hỏng dấu tiếng Việt. Áp dụng cho cả app WPF/WinForms desktop khác.
 ---
 
-# Revit Add-in + MCP: quy trình dev & test tự động
+# Test tự động add-in Revit & AutoCAD qua host thật
 
-Skill này gói lại toàn bộ bài học từ 1 phiên làm việc thực tế xây + test 1 Revit
-add-in qua [rvt-mcp](https://github.com/bimwright/rvt-mcp) (MCP client cho Revit).
-Mỗi kỹ thuật dưới đây đều đã **verify bằng cách chạy thật trên Revit**, kể cả những
-lần thất bại (Revit treo, phải nhờ người dùng bấm tay giải cứu) — giữ nguyên phần
-"tại sao" để không lặp lại đúng những lỗi đó.
+Skill này gói lại bài học từ nhiều phiên làm việc thực tế: xây + test một Revit
+add-in qua [rvt-mcp](https://github.com/bimwright/rvt-mcp), và lái Revit/AutoCAD
+từ bên ngoài bằng UI Automation + chuột thật.
 
-## Bắt buộc: build sạch KHÔNG có nghĩa là xong
+**Mọi kỹ thuật dưới đây đều đã verify bằng cách chạy thật**, kể cả những lần thất
+bại (Revit treo, phải nhờ người dùng bấm tay giải cứu) — giữ nguyên phần "tại
+sao" để không lặp lại đúng những lỗi đó. Chỗ nào chưa verify thì ghi rõ là chưa.
 
-Đây là điều dễ bỏ sót nhất khi dùng skill này, và đã từng bỏ sót thật: sửa
-code + `dotnet build` thành công **chỉ chứng minh code hợp lệ về mặt cú
-pháp/kiểu dữ liệu** — không chứng minh tính năng chạy đúng. Ví dụ thật đã gặp:
-1 tính năng "đổi loại tường qua ComboBox" build sạch, mở cửa sổ không crash,
-nhưng khi thực sự test mới lộ ra chỗ dễ nhầm — verify bằng cách tạo 1 instance
-`IExternalEventHandler` MỚI qua reflection để gọi `Execute()` trực tiếp
-**trông có vẻ đúng** (Document đổi type thật) nhưng **UI không tự cập nhật**,
-vì sự kiện `Changed` chỉ có người nghe (`OnXyzChanged`) khi raise qua ĐÚNG
-instance handler đã được wire trong constructor cửa sổ — instance mới tạo
-không có ai subscribe. Chỉ phát hiện ra vì đã tự so sánh Document vs UI sau
-khi đổi, không dừng lại ở "không có exception".
+## Luật số một, hai tầng
 
-**Sau MỖI lần sửa code (tính năng mới, sửa bug, refactor có ảnh hưởng hành
-vi), coi task chỉ thực sự xong khi đã làm đủ các bước sau — không phải khi
-build sạch:**
+> **Khẳng định phải dựa vào nguồn độc lập với thứ đang được test.**
 
-1. Build sạch (`dotnet build ... -c Debug.R2x`).
-2. Bấm nút ribbon qua MCP để chạy tính năng với đúng DLL mới build —
-   [01-trigger-ribbon-button.md](references/01-trigger-ribbon-button.md).
-3. Xác nhận qua `DebugLog` + đọc trực tiếp state qua `revit_send_code_to_revit`
-   rằng tính năng cho **đúng kết quả mong đợi** — so sánh giá trị trước/sau,
-   không chỉ "không crash" —
-   [02-debug-log-pattern.md](references/02-debug-log-pattern.md).
-4. Nếu tính năng gọi API Revit qua `ExternalEvent`
-   ([03-external-event-pattern.md](references/03-external-event-pattern.md)):
-   khi test, luôn lấy **đúng field private handler/event của cửa sổ đang mở**
-   (`GetField("_tênField", BindingFlags.NonPublic | BindingFlags.Instance)`)
-   để set property + `Raise()` — **đừng** `Activator.CreateInstance` 1 handler
-   mới, event `Changed`/tương tự sẽ không có ai lắng nghe, dễ tưởng nhầm là
-   test đủ trong khi UI không được verify thật.
-5. Nếu tính năng có UI thao tác (nút, chọn dòng, sửa cell...), verify qua
-   UiAutomationToolkit khi khả thi, hoặc qua cách (4) khi thao tác UI đó chưa
-   có sẵn tool tự động (ví dụ sửa cell ComboBox trong DataGrid) —
-   [04-ui-automation-testing.md](references/04-ui-automation-testing.md).
-6. Phục hồi dữ liệu Revit về nguyên trạng, rồi **đọc lại state 1 lần nữa để
-   xác nhận đã phục hồi đúng** — đừng chỉ tin đã gọi Undo/set lại giá trị cũ —
-   [05-safe-testing.md](references/05-safe-testing.md).
+**Tầng 1 — build sạch KHÔNG phải là xong.** `dotnet build` thành công chỉ chứng
+minh code hợp lệ về cú pháp/kiểu dữ liệu. Ví dụ thật: một tính năng "đổi loại
+tường qua ComboBox" build sạch, mở cửa sổ không crash, nhưng verify bằng cách tạo
+một `IExternalEventHandler` MỚI qua reflection **trông có vẻ đúng** (Document đổi
+type thật) mà **UI không hề cập nhật** — vì sự kiện `Changed` chỉ có người nghe
+khi raise qua ĐÚNG instance đã wire trong constructor cửa sổ.
 
-Nếu không có kết nối MCP tới 1 phiên Revit đang chạy (không có target khả
-dụng để test), nói thẳng với người dùng rằng chưa test được qua Revit thật —
-đừng báo "xong"/"hoàn thành" như thể đã verify khi chỉ mới build sạch.
+**Tầng 2 — chạy được trong host thật cũng chưa phải là xong.** Bấm một nút rồi
+đọc lại chính nút đó chỉ chứng minh UI đã vẽ lại. Phải đọc state từ nguồn khác:
+rvt-mcp, COM của AutoCAD, hoặc file log/config do add-in ghi ra.
 
-## Khi nào đọc file tham khảo nào
+Nếu không có kênh nào sống (không MCP target, không mở được host), **nói thẳng là
+chưa test được** — đừng báo "xong" như thể đã verify.
+
+## Vòng lặp chuẩn sau MỖI lần sửa code
+
+1. **Build** — `dotnet build ... -c Debug.R2x`.
+2. **Mở host tới trạng thái test được** — màn hình Home của Revit ẩn ribbon,
+   AutoCAD dừng ở tab Start với 0 document; cả hai đều chưa test được gì.
+   `Start-RevitHost` / `Start-AutoCadHost` → [06](references/06-host-lifecycle.md).
+3. **Chạy tính năng với đúng DLL vừa build** — Revit: `PostCommand` qua ID nội bộ
+   → [01](references/01-trigger-ribbon-button.md). AutoCAD: COM `SendCommand`
+   → [08](references/08-autocad-com.md).
+4. **Xác nhận đúng kết quả mong đợi** — so giá trị **trước/sau**, không dừng ở
+   "không có exception" → [02](references/02-debug-log-pattern.md),
+   [05](references/05-safe-testing.md).
+5. **Nếu qua `ExternalEvent`**: lấy **đúng field private của instance đang chạy**
+   (`GetField(..., NonPublic | Instance)`), **đừng** `Activator.CreateInstance`
+   handler mới → [03](references/03-external-event-pattern.md).
+6. **Nếu có thao tác UI**: chọn công cụ theo bảng trong
+   [04](references/04-ui-automation-testing.md); khi UIA "không thấy" thì chẩn
+   đoán theo [07](references/07-uia-blind-spots.md) trước khi kết luận add-in hỏng.
+7. **Phục hồi dữ liệu, rồi ĐỌC LẠI xác nhận đã phục hồi** →
+   [05](references/05-safe-testing.md).
+
+Hai mẫu chạy được ngay, copy về sửa:
+[examples/revit-smoke.ps1](examples/revit-smoke.ps1) ·
+[examples/acad-smoke.ps1](examples/acad-smoke.ps1)
+
+```powershell
+Import-Module "$env:USERPROFILE\.claude\skills\revit-cad-addin-autotest\scripts\HostUiTest.psm1"
+```
+
+## Đọc file nào khi nào — theo triệu chứng
 
 | Tình huống | Đọc |
 |---|---|
-| Cần bấm 1 nút ribbon Revit từ MCP (không phải người dùng bấm) | [references/01-trigger-ribbon-button.md](references/01-trigger-ribbon-button.md) |
-| Cần biết command đã chạy tới đâu, lỗi ở bước nào (không đoán qua exception) | [references/02-debug-log-pattern.md](references/02-debug-log-pattern.md) |
-| Cửa sổ WPF modeless cần gọi Document.Delete/bất kỳ API Revit nào khi bấm nút | [references/03-external-event-pattern.md](references/03-external-event-pattern.md) |
-| Cần test tự động UI (bấm nút, chọn dòng, xác nhận dialog) không cần chuột thật | [references/04-ui-automation-testing.md](references/04-ui-automation-testing.md) |
-| Test có đụng vào dữ liệu Revit thật (xoá/sửa element) — làm sao không phá model | [references/05-safe-testing.md](references/05-safe-testing.md) |
+| Cần bấm một nút ribbon Revit từ MCP (không phải người dùng bấm) | [01-trigger-ribbon-button.md](references/01-trigger-ribbon-button.md) |
+| Không biết command đã chạy tới đâu, lỗi ở bước nào | [02-debug-log-pattern.md](references/02-debug-log-pattern.md) |
+| Cửa sổ WPF modeless cần gọi `Document.Delete`/bất kỳ API Revit nào | [03-external-event-pattern.md](references/03-external-event-pattern.md) |
+| Không biết nên dùng `uitest.exe`, `HostUiTest.psm1` hay MCP/COM | [04-ui-automation-testing.md](references/04-ui-automation-testing.md) |
+| Sợ test phá dữ liệu thật; không biết đặt khẳng định vào đâu | [05-safe-testing.md](references/05-safe-testing.md) |
+| Mở host xong test ngay thì hỏng; không biết khi nào host mới thật sự sẵn sàng | [06-host-lifecycle.md](references/06-host-lifecycle.md) |
+| UIA không thấy control dù nó hiện rõ; test lúc pass lúc fail; tìm phần tử rất chậm | [07-uia-blind-spots.md](references/07-uia-blind-spots.md) |
+| Làm add-in AutoCAD: chạy lệnh, đọc model, nạp DLL, hoàn tác | [08-autocad-com.md](references/08-autocad-com.md) |
+| Script PowerShell hỏng dấu tiếng Việt, hoặc `if` luôn đúng một cách vô lý | [09-powershell-traps.md](references/09-powershell-traps.md) |
 
 ## Bức tranh tổng quan
 
-1. **Bấm nút ribbon qua MCP** (`01-trigger-ribbon-button.md`) → mở cửa sổ WPF của add-in.
-2. **Xác nhận đã chạy tới đâu** (`02-debug-log-pattern.md`) → đọc file log, không đoán qua exception hay query state WPF từ thread khác.
-3. Cửa sổ WPF gọi API Revit qua **ExternalEvent** (`03-external-event-pattern.md`) — không được gọi thẳng vì cửa sổ modeless không có API context hợp lệ.
-4. **Test tự động UI thật** bằng UiAutomationToolkit (`04-ui-automation-testing.md`) — chạy như 1 process tách biệt, xử lý được cả dialog native mà UI Automation "không thấy".
-5. Mọi thao tác test đụng dữ liệu thật đều **phục hồi ngay sau đó** (`05-safe-testing.md`) — Transaction Rollback khi test logic thuần, `PostCommand(Undo)` khi test qua nút UI thật.
+**Revit** có rvt-mcp làm kênh vào tận trong process: chạy lệnh bằng `PostCommand`
+với ID nội bộ, đọc state bằng `revit_send_code_to_revit`. Cửa sổ modeless phải đi
+qua `ExternalEvent` mới có API context hợp lệ.
 
-## Ghi chú quan trọng: rvt-mcp là open source
+**AutoCAD** không cần MCP — **COM có sẵn làm cả hai vai đó**, và đơn giản hơn:
+`SendCommand` gọi thẳng tên `[CommandMethod]`, `ModelSpace`/`GetVariable` đọc
+state trực tiếp. Đây là lý do add-in AutoCAD dễ test hơn Revit.
 
-[rvt-mcp](https://github.com/bimwright/rvt-mcp) là mã nguồn mở. Nếu gặp giới hạn
-của bộ tool có sẵn (thiếu 1 tool cụ thể, hành vi không như ý), **có thể clone về
-sửa/mở rộng cho phù hợp** — không bị khoá cứng vào bản build sẵn. Đây chính xác là
-cách các kỹ thuật `PostCommand`/`revit_send_code_to_revit` trong skill này được
-khai thác: dùng tool "escape hatch" sẵn có (`revit_send_code_to_revit`) của
-rvt-mcp để làm những việc không có tool riêng.
+**Cả hai** dùng chung phần ngoài process: mở host và chờ đúng tín hiệu sẵn sàng,
+dọn dialog còn sót, tìm/bấm control qua UIA, và rơi xuống chuột thật khi control
+không có peer.
 
-## Áp dụng cho project khác
+## Ba công cụ trong repo này
 
-Mọi pattern trong skill này viết theo kiểu **template độc lập với 1 project cụ
-thể** — không giả định tên class/namespace nào ngoài quy ước chuẩn của
-Nice3point.Revit.Templates (`ExternalCommand`, `.addin` manifest...). Khi áp dụng:
-đổi tên class/namespace theo project của bạn, phần logic giữ nguyên.
+| | Cần build | Dùng cho |
+|---|---|---|
+| `scripts/HostUiTest.psm1` | không | vòng đời host, dialog khởi động, kiểm tra nhanh, chuột thật |
+| `assets/UiAutomationToolkit` (`uitest.exe`) | `dotnet build` | thao tác UI phức tạp trong cửa sổ add-in (`select-row`, `click-and-confirm`) |
+| rvt-mcp / COM | không | chạy lệnh + đọc state để khẳng định |
 
-`UiAutomationToolkit` (dùng ở bước 4) được đóng gói sẵn toàn bộ source trong
-[assets/UiAutomationToolkit](assets/UiAutomationToolkit) — copy nguyên thư mục đó
-ra ngoài, `dotnet build`, là dùng được ngay cho bất kỳ project nào, không riêng
-Revit.
+Bảng chọn chi tiết ở [04](references/04-ui-automation-testing.md).
+
+## Ghi chú
+
+**rvt-mcp là mã nguồn mở.** Gặp giới hạn của bộ tool có sẵn thì clone về sửa/mở
+rộng — đó chính là cách các kỹ thuật `PostCommand`/`revit_send_code_to_revit`
+trong skill này được khai thác.
+
+**Áp dụng cho project khác.** Mọi pattern viết theo kiểu template độc lập với một
+project cụ thể — không giả định tên class/namespace nào ngoài quy ước chuẩn của
+Nice3point.Revit.Templates. Đổi tên class/namespace theo project của bạn, phần
+logic giữ nguyên. `UiAutomationToolkit` và `HostUiTest.psm1` dùng được cho bất kỳ
+app WPF/WinForms nào, không riêng Revit/AutoCAD.
+
+## Giới hạn đã biết
+
+- **Kéo-thả file vào cửa sổ** chưa tự động hoá được: cần OLE drag source thật,
+  `mouse_event` giữ-rê không kích hoạt được drop của WPF.
+- **`NETLOAD` nạp add-in AutoCAD chưa verify** trong phiên nào — mới chạy lệnh
+  dựng sẵn. AutoCAD không unload assembly được, nên vòng sửa-code phải khởi động
+  lại app (~20–30 giây).
+- Số đo tốc độ lấy trên **một máy** (Revit 2026, AutoCAD 2027). Tỉ lệ giữa các
+  cách thì ổn định, con số tuyệt đối thì không nên coi là chuẩn.
+- Kỹ thuật ID nội bộ ribbon dựa vào field private `m_RibbonItem` — verify trên
+  Revit 2024.3 và 2026, không có cam kết ổn định giữa các version.
+- Chưa thử trên nhiều màn hình DPI khác nhau; `Invoke-UiClick` dùng toạ độ màn
+  hình vật lý.
