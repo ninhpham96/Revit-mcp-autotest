@@ -1,120 +1,49 @@
-# Gọi API Revit từ cửa sổ WPF modeless — ExternalEvent pattern
+# Test cửa sổ WPF: `.Show()` (modeless) khác `.ShowDialog()` (modal) thế nào
 
-## Vấn đề
+> **File này chỉ nói cách TEST một cửa sổ đã tồn tại, không phải quy tắc bạn
+> phải viết code theo.** Đọc code hiện có để biết nó đang mở kiểu nào và đã
+> dùng cơ chế gì, rồi test đúng theo cái ĐANG CÓ. Đừng lấy nội dung này làm lý
+> do tự ý sửa/refactor code người dùng sang một pattern khác khi họ không yêu
+> cầu việc đó.
 
-Cửa sổ mở bằng `.Show()` (không phải `.ShowDialog()`) chạy **modeless** — code
-trong `Execute()` của command đã trả về xong, Revit tiếp tục xử lý message
-loop bình thường trong khi cửa sổ vẫn mở. Bấm 1 nút trên cửa sổ đó (ví dụ
-"Xoá"), code chạy trong event handler của WPF (`Button.Click`) — **không có
-Revit API context hợp lệ** tại thời điểm đó. Gọi thẳng
-`new Transaction(doc, "...").Start()` hoặc `doc.Delete(id)` từ đây sẽ lỗi
-hoặc hành vi không xác định.
+## Vì sao hai kiểu cửa sổ cần test khác nhau — bối cảnh
 
-## Giải pháp chuẩn: `IExternalEventHandler` + `ExternalEvent`
+**`.Show()` (modeless)**: `Execute()` của command đã trả về xong, Revit tiếp
+tục xử lý message loop bình thường trong khi cửa sổ vẫn mở. Code chạy trong
+event handler của WPF (`Button.Click`) lúc đó **không có Revit API context hợp
+lệ** — nếu code gọi thẳng `new Transaction(doc, "...").Start()` hay
+`doc.Delete(id)` ngay trong handler đó, sẽ lỗi hoặc hành vi không xác định. Vì
+vậy cửa sổ modeless thường (không phải luôn luôn — tuỳ code có sẵn) đi qua
+`IExternalEventHandler` + `ExternalEvent`: nút bấm chỉ set property rồi gọi
+`.Raise()`, Revit gọi lại `Execute(app)` sau đó khi nó rảnh — nghĩa là **không
+đồng bộ**, không có cách nào biết chắc lệnh đã chạy xong ngay trong cùng một
+lời gọi.
 
-1. Viết 1 `IExternalEventHandler` riêng cho mỗi hành động cần làm — property
-   chứa dữ liệu cần thiết (element id, giá trị mới...), `Execute(UIApplication)`
-   chứa logic thật (transaction, gọi API).
-2. Trong constructor của cửa sổ: `ExternalEvent.Create(handler)` — tạo **1
-   lần duy nhất**, giữ lại làm field.
-3. Khi bấm nút: set property trên handler rồi gọi `.Raise()` — Revit sẽ gọi
-   `handler.Execute(app)` khi nó rảnh (API context hợp lệ lúc đó).
+**`.ShowDialog()` (modal)**: chặn ngay trên chính thread đã gọi nó (thường là
+main thread của Revit, nếu `ShowDialog()` được gọi từ trong `Execute()`) bằng
+một nested message loop. Code trong handler nút của dialog đó vẫn chạy trên
+đúng thread, vẫn có API context hợp lệ — gọi thẳng `Transaction` từ đây là
+bình thường, **không cần** `ExternalEvent`. Nhưng đổi lại, trong khi dialog còn
+mở, thread đó bị chiếm — mọi cơ chế tự động hoá khác cần chạy trên cùng thread
+(round-trip `revit_send_code_to_revit` khác, `Idling`, hàng đợi reload...) đều
+bị **hoãn lại** cho tới khi dialog đóng. Đã verify hiện tượng này khi test
+MiniAppLoader: reload bị hoãn (không nạp) trong lúc Revit đang kẹt 1 modal
+dialog, và chạy ngay sau khi dialog đóng.
 
-### Ví dụ: xoá 1 element
+## Test khi cửa sổ mở bằng `.Show()` (modeless)
 
-```csharp
-// Handlers/DeleteElementHandler.cs
-using Autodesk.Revit.DB;
-using Autodesk.Revit.UI;
-using System;
+**Nếu code đã dùng `IExternalEventHandler` + `ExternalEvent`** (cách phổ biến
+nhất cho modeless) — xem mục "Cạm bẫy khi TEST qua reflection" ngay dưới, đây
+là phần quan trọng nhất của file này.
 
-public class DeleteElementHandler : IExternalEventHandler
-{
-    public ElementId ElementId { get; set; } = ElementId.InvalidElementId;
+**Nếu không rõ code dùng cơ chế gì**, hoặc bấm nút xong thấy lỗi lạ: đọc
+`DebugLog` (xem [02](02-debug-log-pattern.md)) để biết exception thật là gì,
+thay vì đoán. Một `NullReferenceException`/exception về API context ngay khi
+bấm nút trên cửa sổ modeless là dấu hiệu code đang gọi API Revit trực tiếp từ
+handler mà không qua `ExternalEvent` — đây là **thông tin để hiểu triệu chứng
+đang thấy**, không phải kết luận "phải sửa lại".
 
-    public event Action<ElementId>? Deleted;
-
-    public void Execute(UIApplication app)
-    {
-        var document = app.ActiveUIDocument.Document;
-
-        using var transaction = new Transaction(document, "Xoá phần tử");
-        transaction.Start();
-        document.Delete(ElementId);
-        transaction.Commit();
-
-        Deleted?.Invoke(ElementId);
-    }
-
-    public string GetName() => "Xoá phần tử đã chọn";
-}
-```
-
-```csharp
-// Views/MyWindow.xaml.cs
-public partial class MyWindow : Window
-{
-    private readonly DeleteElementHandler _deleteHandler = new();
-    private readonly ExternalEvent _deleteEvent;
-
-    public MyWindow(/* ... */)
-    {
-        InitializeComponent();
-        _deleteEvent = ExternalEvent.Create(_deleteHandler);
-        _deleteHandler.Deleted += OnDeleted;
-    }
-
-    private void DeleteButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (SelectedItem is not MyItem selected) return;
-
-        _deleteHandler.ElementId = selected.ElementId;
-        _deleteEvent.Raise(); // không chạy đồng bộ — trả về ngay, Execute() chạy sau
-    }
-
-    private void OnDeleted(ElementId deletedId)
-    {
-        Dispatcher.Invoke(() => { /* cập nhật UI, ví dụ gỡ dòng khỏi list */ });
-    }
-}
-```
-
-## Vì sao mỗi hành động 1 handler riêng, không gộp chung 1 handler "đa năng"
-
-Handler có state (property) được set trước khi `Raise()` — nếu dùng chung 1
-handler cho nhiều hành động khác nhau (vừa xoá vừa đổi màu), phải thêm 1 field
-kiểu "loại hành động" rồi switch trong `Execute()`, dễ nhầm lẫn và khó test
-độc lập từng hành động. Tách riêng (`DeleteElementHandler`,
-`ChangeColorHandler`, `ShowElementHandler`...) — mỗi handler làm đúng 1 việc,
-dễ test riêng qua `revit_send_code_to_revit` (gọi thẳng `Execute(app)` trong
-1 transaction test rồi rollback — xem
-[05-safe-testing.md](05-safe-testing.md)).
-
-## Pattern khác hay dùng: đổi màu / override đồ hoạ trong view hiện tại
-
-Không đổi Material gốc (ảnh hưởng mọi view/phần tử dùng chung material) — dùng
-`View.SetElementOverrides` cho **view hiện tại**, dễ hoàn tác
-(`SetElementOverrides(id, new OverrideGraphicSettings())` để trả về mặc định).
-Lưu ý: 1 element thường có **2 kiểu hiển thị khác nhau tuỳ view** — "Surface"
-(khi nhìn thấy bề mặt, ví dụ 3D/elevation) và "Cut" (khi view cắt qua nó, ví
-dụ mặt bằng/mặt cắt). Muốn chắc lên màu đúng bất kể loại view, phải set cả 2:
-
-```csharp
-var overrideSettings = new OverrideGraphicSettings()
-    .SetSurfaceForegroundPatternColor(color)
-    .SetSurfaceForegroundPatternId(solidFillPatternId)
-    .SetCutForegroundPatternColor(color)
-    .SetCutForegroundPatternId(solidFillPatternId)
-    .SetProjectionLineColor(color)
-    .SetCutLineColor(color);
-```
-
-(`solidFillPatternId` lấy qua
-`new FilteredElementCollector(doc).OfClass(typeof(FillPatternElement)).Cast<FillPatternElement>().First(p => p.GetFillPattern().IsSolidFill).Id`.)
-Đã verify thật: chỉ set Surface mà view đang ở mặt bằng (cắt qua tường) thì
-**không lên màu gì cả** — vì view đó hiển thị theo Cut, không phải Surface.
-
-## Cạm bẫy khi TEST handler qua reflection: đừng tạo instance mới
+### Cạm bẫy khi TEST qua reflection: đừng tạo instance mới
 
 Khi verify 1 handler qua `revit_send_code_to_revit` (không qua UI thật), có 2
 cách:
@@ -122,11 +51,10 @@ cách:
 **Cách sai (trông có vẻ đúng, dễ bỏ sót)**: `Activator.CreateInstance(handlerType)`
 tạo 1 instance MỚI rồi set property + gọi `Execute(app)` trực tiếp. Document
 đổi đúng — nhưng nếu handler có `event Action<...> Changed` để cửa sổ tự cập
-nhật UI (như `OnWallTypeChanged`/`OnWallDeleted`), sự kiện đó **không ai lắng
-nghe** vì chỉ instance thật trong cửa sổ (`_myHandler`) mới được
-`.Changed += OnXyzChanged` trong constructor. Test kiểu này chỉ verify được
-phần Document, bỏ sót hoàn toàn phần đồng bộ UI — dễ báo "test xong" trong khi
-UI có bug thật.
+nhật UI, sự kiện đó **không ai lắng nghe** vì chỉ instance thật trong cửa sổ
+mới được `.Changed += OnXyzChanged` lúc constructor chạy. Test kiểu này chỉ
+verify được phần Document, bỏ sót hoàn toàn phần đồng bộ UI — dễ báo "test
+xong" trong khi UI có bug thật.
 
 **Cách đúng**: lấy đúng field private của handler + `ExternalEvent` đã được
 wire sẵn trong cửa sổ đang mở, qua reflection:
@@ -144,33 +72,35 @@ realHandler.GetType().GetProperty("ElementId").SetValue(realHandler, someId);
 realEvent.GetType().GetMethod("Raise").Invoke(realEvent, null); // không đồng bộ — kiểm tra ở lệnh SAU
 ```
 
-Sau đó, ở 1 lệnh `revit_send_code_to_revit` RIÊNG (round-trip tiếp theo — xem
-lý do "không đồng bộ" ở [01-trigger-ribbon-button.md](01-trigger-ribbon-button.md)),
-verify CẢ 2: Document đã đổi đúng, **VÀ** UI (danh sách/label trong cửa sổ)
-cũng hiển thị đúng giá trị mới — nếu chỉ verify Document mà bỏ qua UI, coi như
-chưa test đủ phần quan trọng nhất của tính năng (người dùng nhìn thấy UI, không
-nhìn thấy Document trực tiếp).
+Sau đó, ở 1 lệnh `revit_send_code_to_revit` RIÊNG (round-trip tiếp theo — vì
+`.Raise()` không đồng bộ, xem [01](01-trigger-ribbon-button.md)), verify CẢ 2:
+Document đã đổi đúng, **VÀ** UI (danh sách/label trong cửa sổ) cũng hiển thị
+đúng giá trị mới. Chỉ verify Document mà bỏ qua UI là chưa test đủ phần quan
+trọng nhất (người dùng nhìn thấy UI, không nhìn thấy Document trực tiếp).
 
-## Pattern khác hay dùng: "zoom tới + chọn phần tử" khi user chọn dòng trong list
+## Test khi cửa sổ mở bằng `.ShowDialog()` (modal)
 
-```csharp
-public class ShowElementHandler : IExternalEventHandler
-{
-    public ElementId ElementId { get; set; } = ElementId.InvalidElementId;
+Bấm nút xong verify **ngay trong cùng một lời gọi** — không cần round-trip 2
+lệnh như trên, vì không có `ExternalEvent.Raise()` bất đồng bộ ở giữa (miễn là
+code không tự thêm cơ chế bất đồng bộ khác).
 
-    public void Execute(UIApplication app)
-    {
-        var uidoc = app.ActiveUIDocument;
-        uidoc.ShowElements(ElementId);
-        uidoc.Selection.SetElementIds(new List<ElementId> { ElementId });
-    }
+**Nhưng bản thân modal lại chặn automation ở một tầng khác**: trong lúc dialog
+còn mở, `revit_send_code_to_revit` gọi tiếp có thể không chạy được / phải chờ,
+và cây UIA có thể "biến mất" phần nội dung phía sau (xem điểm 1 ở
+[07-uia-blind-spots.md](07-uia-blind-spots.md): *"có dialog nào đang mở
+không?"*). Muốn bấm nút bên trong chính dialog đó: dùng đúng route cho loại
+dialog — dialog native (`MessageBox`, `TaskDialog`) thì qua Win32
+`BM_CLICK` (`Invoke-HostNativeButton` trong `HostUiTest.psm1`,
+[06](06-host-lifecycle.md)), dialog WPF thật thì qua UIA/`PostCommand` như
+bình thường. Luôn `Close-StrayWindow` trước/sau khi xong (xem
+[05-safe-testing.md](05-safe-testing.md)) — một dialog bị bỏ quên mở sẽ chặn
+mọi bước test sau đó, không riêng gì round-trip MCP.
 
-    public string GetName() => "Zoom tới phần tử đã chọn";
-}
-```
+## Vì sao mỗi hành động 1 handler riêng, không gộp chung 1 handler "đa năng"
 
-Gắn vào sự kiện `SelectionChanged` của control danh sách (DataGrid...) — chọn
-dòng nào, Revit tự pan/zoom + highlight phần tử đó ngay, không cần thêm nút.
-`ShowElements` chỉ thực sự di chuyển view nếu phần tử **chưa nằm trong khung
-nhìn hiện tại** — nếu đã thấy sẵn thì view giữ nguyên (đúng hành vi chuẩn của
-Revit khi "Show" 1 phần tử, không phải bug).
+Đây là quan sát về code hay gặp, không phải yêu cầu: handler có state (property)
+được set trước khi `Raise()` — nếu 1 handler dùng chung cho nhiều hành động
+khác nhau, nó cần thêm 1 field kiểu "loại hành động" rồi switch trong
+`Execute()`. Khi gặp code như vậy, test riêng từng nhánh hành động một, đừng
+gộp chung một lượt "test tất cả" — dễ bỏ sót nhánh không được set đúng field
+loại hành động.

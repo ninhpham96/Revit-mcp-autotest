@@ -78,7 +78,7 @@ Import-Module "$env:USERPROFILE\.claude\skills\revit-cad-addin-autotest\scripts\
 | Cần bấm một nút ribbon Revit từ MCP (không phải người dùng bấm) | [01-trigger-ribbon-button.md](references/01-trigger-ribbon-button.md) |
 | Nút ribbon của add-in không thấy đâu cả (dev loader tạo tab riêng), hoặc tên nút chỉ là số/generic (`GenericCommand00`..) không biết ứng với add-in nào | [10-dynamic-loader-resolution.md](references/10-dynamic-loader-resolution.md) |
 | Không biết command đã chạy tới đâu, lỗi ở bước nào | [02-debug-log-pattern.md](references/02-debug-log-pattern.md) |
-| Cửa sổ WPF modeless cần gọi `Document.Delete`/bất kỳ API Revit nào | [03-external-event-pattern.md](references/03-external-event-pattern.md) |
+| Cần test 1 cửa sổ WPF bấm nút gọi API Revit — cửa sổ modeless (`.Show()`) hay modal (`.ShowDialog()`) test khác nhau thế nào | [03-external-event-pattern.md](references/03-external-event-pattern.md) |
 | Không biết nên dùng `uitest.exe`, `HostUiTest.psm1` hay MCP/COM | [04-ui-automation-testing.md](references/04-ui-automation-testing.md) |
 | Sợ test phá dữ liệu thật; không biết đặt khẳng định vào đâu | [05-safe-testing.md](references/05-safe-testing.md) |
 | Mở host xong test ngay thì hỏng; không biết khi nào host mới thật sự sẵn sàng | [06-host-lifecycle.md](references/06-host-lifecycle.md) |
@@ -89,8 +89,9 @@ Import-Module "$env:USERPROFILE\.claude\skills\revit-cad-addin-autotest\scripts\
 ## Bức tranh tổng quan
 
 **Revit** có rvt-mcp làm kênh vào tận trong process: chạy lệnh bằng `PostCommand`
-với ID nội bộ, đọc state bằng `revit_send_code_to_revit`. Cửa sổ modeless phải đi
-qua `ExternalEvent` mới có API context hợp lệ.
+với ID nội bộ, đọc state bằng `revit_send_code_to_revit`. Test một cửa sổ WPF thì
+cách khác nhau tuỳ nó mở bằng `.Show()` hay `.ShowDialog()` — xem
+[03](references/03-external-event-pattern.md).
 
 **AutoCAD** không cần MCP — **COM có sẵn làm cả hai vai đó**, và đơn giản hơn:
 `SendCommand` gọi thẳng tên `[CommandMethod]`, `ModelSpace`/`GetVariable` đọc
